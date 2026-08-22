@@ -231,7 +231,7 @@ function renderAll() {
   document.getElementById('countCatchments').textContent = byCatchment.length;
   document.getElementById('countHubs').textContent = byHub.length;
   document.getElementById('countRegions').textContent = byRegion.length;
-  document.getElementById('grandTotal').textContent = buyingPoints.length ? fmt(grandTotal) + " units" : "-";
+  document.getElementById('grandTotal').textContent = buyingPoints.length ? fmt(grandTotal) + " Kgs" : "-";
 
   [pointsLayer, catchmentLayer, hubLayer, regionLayer].forEach(l => { l.clearLayers(); map.removeLayer(l); });
 

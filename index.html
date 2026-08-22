@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Buying Point Receipts Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root{
+    --soil:#2E2418; --soil-light:#4A3B28; --paper:#F1E9D8; --paper-dim:#E4D9C0;
+    --wheat:#C9A227; --leaf:#3F5B3D; --leaf-light:#6E8C5D; --rust:#9A4B2E; --line:#B9A97E;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;background:var(--soil);
+    font-family:'Courier New', ui-monospace, monospace;color:var(--paper);}
+  .wrap{display:flex;height:100vh;min-height:520px;}
+  #map{flex:1 1 65%;filter:sepia(8%) saturate(85%);}
+  .panel{flex:0 0 330px;background:var(--soil-light);border-left:3px solid var(--wheat);
+    padding:20px 18px;overflow-y:auto;display:flex;flex-direction:column;}
+  h1{font-family:Georgia, serif;font-size:21px;margin:0 0 4px;color:var(--wheat);}
+  .subline{font-size:11px;color:var(--paper-dim);opacity:0.75;margin:0 0 16px;}
+
+  .upload-box{
+    background:var(--soil);border:2px dashed var(--wheat);border-radius:3px;
+    padding:14px;margin-bottom:16px;
+  }
+  .upload-box.hidden{display:none;}
+  .upload-box input[type=file]{
+    font-family:inherit;font-size:10px;color:var(--paper-dim);width:100%;margin-bottom:8px;
+  }
+  .upload-label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--leaf-light);
+    display:block;margin-bottom:8px;}
+  .field-label{font-size:9.5px;color:var(--paper-dim);opacity:0.8;display:block;margin:6px 0 3px;}
+  .status{font-size:11px;margin-top:8px;line-height:1.5;}
+  .status.ok{color:var(--leaf-light);}
+  .status.err{color:#D97757;}
+  .status.pending{color:var(--wheat);}
+  .columns-hint{font-size:9.5px;color:var(--paper-dim);opacity:0.55;margin-top:8px;line-height:1.5;}
+
+  .toggle{display:flex;gap:5px;margin-bottom:16px;flex-wrap:wrap;}
+  .toggle button{
+    flex:1 1 auto;background:var(--soil);color:var(--paper-dim);border:1px solid var(--line);
+    padding:7px 4px;font-family:inherit;font-size:10px;letter-spacing:0.3px;text-transform:uppercase;
+    cursor:pointer;border-radius:2px;
+  }
+  .toggle button.active{background:var(--wheat);color:var(--soil);border-color:var(--wheat);font-weight:bold;}
+
+  .summary{background:var(--paper);color:var(--soil);border-radius:2px;padding:14px 14px 8px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.35);}
+  .summary-head{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--soil-light);
+    border-bottom:2px dashed var(--line);padding-bottom:6px;margin-bottom:6px;}
+  .srow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dotted var(--line);font-size:12.5px;gap:8px;}
+  .srow .qty{font-weight:bold;white-space:nowrap;}
+  .stotal{display:flex;justify-content:space-between;margin-top:4px;padding:8px 0 2px;
+    border-top:2px solid var(--soil);font-size:13.5px;font-weight:bold;color:var(--rust);}
+  .empty-note{font-size:12px;color:var(--soil-light);text-align:center;padding:20px 6px;}
+
+  .meta{margin-top:16px;font-size:10.5px;line-height:1.7;color:var(--paper-dim);opacity:0.85;}
+  .meta b{color:var(--wheat);}
+  .leaflet-popup-content-wrapper{background:var(--paper);color:var(--soil);border-radius:2px;}
+  .leaflet-popup-tip{background:var(--paper);}
+  .popup-title{font-family:Georgia, serif;font-weight:bold;font-size:14px;margin-bottom:6px;
+    border-bottom:2px dashed var(--line);padding-bottom:4px;}
+  .popup-row{display:flex;justify-content:space-between;gap:16px;font-size:12.5px;padding:2px 0;}
+  .popup-total{margin-top:6px;padding-top:6px;border-top:2px solid var(--soil);font-weight:bold;
+    color:var(--rust);display:flex;justify-content:space-between;}
+  @media (max-width:720px){
+    .wrap{flex-direction:column;}
+    .panel{flex:0 0 auto;border-left:none;border-top:3px solid var(--wheat);max-height:50vh;}
+    #map{flex:1 1 50vh;}
+  }
+  .leaflet-control-layers{
+    background:var(--paper) !important;color:var(--soil);font-size:12px;
+    font-family:'Courier New', ui-monospace, monospace;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="map"></div>
+  <div class="panel">
+    <h1>Buying Point Receipts</h1>
+    <p class="subline" id="sourceLine">Loading data from repo...</p>
+
+    <div class="upload-box" id="uploadBox">
+      <span class="upload-label">Manual load (fallback)</span>
+      <span class="field-label">Receipts CSV</span>
+      <input type="file" id="csvInput" accept=".csv" />
+      <span class="field-label">Boundaries GeoJSON (optional)</span>
+      <input type="file" id="geoInput" accept=".geojson,.json" />
+      <div class="status" id="status">Checking for data/receipts.csv and data/boundaries.geojson...</div>
+      <div class="columns-hint">
+        CSV columns needed: name, lat, lon, region, hub, catchment, crop, qty
+      </div>
+    </div>
+
+    <div class="toggle">
+      <button id="btnPoints" class="active">Points</button>
+      <button id="btnCatchment">Catchment</button>
+      <button id="btnHub">Hub</button>
+      <button id="btnRegion">Region</button>
+    </div>
+
+    <div class="summary" id="summary"></div>
+
+    <div class="meta">
+      <div><b>Buying points:</b> <span id="countPoints">-</span></div>
+      <div><b>Catchments:</b> <span id="countCatchments">-</span></div>
+      <div><b>Hubs:</b> <span id="countHubs">-</span></div>
+      <div><b>Regions:</b> <span id="countRegions">-</span></div>
+      <div><b>Total received:</b> <span id="grandTotal">-</span></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script>
+const REQUIRED = ["name","lat","lon","region","hub","catchment","crop","qty"];
+let currentRows = [];
+let boundariesData = null; // parsed GeoJSON FeatureCollection, or null if none loaded
+
+// ---- derive buying points + group levels from flat rows ----
+function buildFromRows(rows) {
+  const pointsMap = {};
+  rows.forEach(r => {
+    const key = r.name;
+    if (!pointsMap[key]) {
+      pointsMap[key] = { name: r.name, lat: +r.lat, lon: +r.lon,
+        region: r.region, hub: r.hub, catchment: r.catchment, crops: [] };
+    }
+    const existing = pointsMap[key].crops.find(c => c.crop === r.crop);
+    if (existing) { existing.qty += Number(r.qty) || 0; }
+    else { pointsMap[key].crops.push({ crop: r.crop, qty: Number(r.qty) || 0 }); }
+  });
+  return Object.values(pointsMap);
+}
+const pointTotal = p => p.crops.reduce((s, c) => s + c.qty, 0);
+const fmt = n => Math.round(n).toLocaleString();
+
+function groupBy(list, keyFn) {
+  const groups = {};
+  list.forEach(p => {
+    const key = keyFn(p) || "(unspecified)";
+    if (!groups[key]) groups[key] = { name: key, points: [], total: 0 };
+    groups[key].points.push(p);
+    groups[key].total += pointTotal(p);
+  });
+  Object.values(groups).forEach(g => {
+    g.lat = g.points.reduce((s, p) => s + p.lat, 0) / g.points.length;
+    g.lon = g.points.reduce((s, p) => s + p.lon, 0) / g.points.length;
+  });
+  return Object.values(groups);
+}
+function radiusFor(total, maxTotal) { return 10 + (total / (maxTotal||1)) * 22; }
+function opacityFor(total, maxTotal) { return 0.15 + 0.65 * (total / (maxTotal||1)); }
+
+// ---- map + basemaps ----
+const map = L.map('map').setView([-14.55, 29.15], 10);
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
+});
+const satelliteLayer = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics', maxZoom: 19 }
+);
+osmLayer.addTo(map);
+L.control.layers({ "OpenStreetMap": osmLayer, "Satellite": satelliteLayer }, null, { position: 'topright' }).addTo(map);
+
+let pointsLayer = L.layerGroup();
+let catchmentLayer = L.layerGroup();
+let hubLayer = L.layerGroup();
+let regionLayer = L.layerGroup();
+let activeKey = 'points';
+let buyingPoints = [], byCatchment = [], byHub = [], byRegion = [], grandTotal = 0;
+
+// ---- build a layer for one grouping level: real polygons where boundaries exist, bubbles elsewhere ----
+function buildLevelLayer(groups, level, bubbleColor) {
+  const layer = L.layerGroup();
+  const maxG = Math.max(...groups.map(g => g.total), 1);
+  const byName = {};
+  groups.forEach(g => byName[g.name] = g);
+  const coveredNames = new Set();
+
+  if (boundariesData) {
+    const features = boundariesData.features.filter(f => f.properties && f.properties.level === level);
+    if (features.length > 0) {
+      const geo = L.geoJSON({ type: "FeatureCollection", features }, {
+        style: f => {
+          const g = byName[f.properties.name];
+          const total = g ? g.total : 0;
+          return { color: "#2E2418", weight: 1.5,
+            fillColor: bubbleColor, fillOpacity: g ? opacityFor(total, maxG) : 0.08 };
+        },
+        onEachFeature: (f, lyr) => {
+          const g = byName[f.properties.name];
+          let popup = `<div class="popup-title">${f.properties.name} (${level})</div>`;
+          if (g) {
+            popup += `<div class="popup-row"><span>Buying points</span><span>${g.points.length}</span></div>
+              <div class="popup-total"><span>Total received</span><span>${fmt(g.total)}</span></div>`;
+          } else {
+            popup += `<div class="popup-row"><span colspan="2">No receipts matched to this boundary</span></div>`;
+          }
+          lyr.bindPopup(popup);
+        }
+      });
+      geo.addTo(layer);
+      features.forEach(f => coveredNames.add(f.properties.name));
+    }
+  }
+
+  // fallback bubble for any group without a matching boundary polygon
+  groups.filter(g => !coveredNames.has(g.name)).forEach(g => {
+    let popup = `<div class="popup-title">${g.name} (${level})</div>
+      <div class="popup-row"><span>Buying points</span><span>${g.points.length}</span></div>
+      <div class="popup-total"><span>Total received</span><span>${fmt(g.total)}</span></div>`;
+    L.circleMarker([g.lat, g.lon], { radius: radiusFor(g.total, maxG), color:"#2E2418", weight:2,
+      fillColor: bubbleColor, fillOpacity: 0.8 }).bindPopup(popup).addTo(layer);
+  });
+
+  return layer;
+}
+
+function renderAll() {
+  buyingPoints = buildFromRows(currentRows);
+  byCatchment = groupBy(buyingPoints, p => p.catchment);
+  byHub = groupBy(buyingPoints, p => p.hub);
+  byRegion = groupBy(buyingPoints, p => p.region);
+  grandTotal = buyingPoints.reduce((s, p) => s + pointTotal(p), 0);
+
+  document.getElementById('countPoints').textContent = buyingPoints.length;
+  document.getElementById('countCatchments').textContent = byCatchment.length;
+  document.getElementById('countHubs').textContent = byHub.length;
+  document.getElementById('countRegions').textContent = byRegion.length;
+  document.getElementById('grandTotal').textContent = buyingPoints.length ? fmt(grandTotal) + " units" : "-";
+
+  [pointsLayer, catchmentLayer, hubLayer, regionLayer].forEach(l => { l.clearLayers(); map.removeLayer(l); });
+
+  const maxPoint = Math.max(...buyingPoints.map(pointTotal), 1);
+  buyingPoints.forEach(p => {
+    const total = pointTotal(p);
+    let popup = `<div class="popup-title">${p.name}</div>
+      <div class="popup-row" style="opacity:.7"><span>${p.catchment} \u00b7 ${p.hub} \u00b7 ${p.region}</span><span></span></div>`;
+    p.crops.forEach(c => popup += `<div class="popup-row"><span>${c.crop}</span><span>${fmt(c.qty)}</span></div>`);
+    popup += `<div class="popup-total"><span>Total</span><span>${fmt(total)}</span></div>`;
+    L.circleMarker([p.lat, p.lon], { radius: radiusFor(total, maxPoint), color:"#2E2418", weight:2,
+      fillColor:"#C9A227", fillOpacity:0.85 }).bindPopup(popup).addTo(pointsLayer);
+  });
+
+  catchmentLayer = buildLevelLayer(byCatchment, "catchment", "#6E8C5D");
+  hubLayer = buildLevelLayer(byHub, "hub", "#3F5B3D");
+  regionLayer = buildLevelLayer(byRegion, "region", "#9A4B2E");
+
+  setActive(activeKey);
+}
+
+function renderSummary() {
+  const el = document.getElementById('summary');
+  if (buyingPoints.length === 0) { el.innerHTML = `<div class="empty-note">No data loaded</div>`; return; }
+  let groups, label;
+  if (activeKey === 'points') {
+    let html = `<div class="summary-head">Buying points</div>`;
+    buyingPoints.slice().sort((a,b)=>pointTotal(b)-pointTotal(a)).forEach(p => {
+      html += `<div class="srow"><span>${p.name}</span><span class="qty">${fmt(pointTotal(p))}</span></div>`;
+    });
+    html += `<div class="stotal"><span>Total</span><span>${fmt(grandTotal)}</span></div>`;
+    el.innerHTML = html; return;
+  }
+  if (activeKey === 'catchment') { groups = byCatchment; label = 'By catchment'; }
+  if (activeKey === 'hub')       { groups = byHub; label = 'By hub'; }
+  if (activeKey === 'region')    { groups = byRegion; label = 'By region'; }
+  let html = `<div class="summary-head">${label}</div>`;
+  groups.slice().sort((a,b) => b.total - a.total).forEach(g => {
+    html += `<div class="srow"><span>${g.name}</span><span class="qty">${fmt(g.total)}</span></div>`;
+  });
+  html += `<div class="stotal"><span>Total</span><span>${fmt(groups.reduce((s,g)=>s+g.total,0))}</span></div>`;
+  el.innerHTML = html;
+}
+
+const buttons = { points: document.getElementById('btnPoints'), catchment: document.getElementById('btnCatchment'),
+                   hub: document.getElementById('btnHub'), region: document.getElementById('btnRegion') };
+function setActive(key) {
+  activeKey = key;
+  Object.values(buttons).forEach(b => b.classList.remove('active'));
+  buttons[key].classList.add('active');
+  [pointsLayer, catchmentLayer, hubLayer, regionLayer].forEach(l => map.removeLayer(l));
+  if (key === 'points') pointsLayer.addTo(map);
+  if (key === 'catchment') catchmentLayer.addTo(map);
+  if (key === 'hub') hubLayer.addTo(map);
+  if (key === 'region') regionLayer.addTo(map);
+  renderSummary();
+}
+buttons.points.onclick = () => setActive('points');
+buttons.catchment.onclick = () => setActive('catchment');
+buttons.hub.onclick = () => setActive('hub');
+buttons.region.onclick = () => setActive('region');
+
+function recenterOnData() {
+  if (buyingPoints.length === 0) return;
+  const centerLat = buyingPoints.reduce((s,p)=>s+p.lat,0) / buyingPoints.length;
+  const centerLon = buyingPoints.reduce((s,p)=>s+p.lon,0) / buyingPoints.length;
+  map.setView([centerLat, centerLon], 9);
+}
+
+// ---- manual fallback upload handling ----
+const statusEl = document.getElementById('status');
+const sourceLine = document.getElementById('sourceLine');
+const uploadBox = document.getElementById('uploadBox');
+
+function parseCsvRows(text) {
+  const results = Papa.parse(text, { header: true, skipEmptyLines: true });
+  const headers = results.meta.fields || [];
+  const missing = REQUIRED.filter(col => !headers.includes(col));
+  if (missing.length > 0) throw new Error("Missing column(s): " + missing.join(", "));
+  const rows = results.data.filter(r => r.name && r.lat && r.lon);
+  if (rows.length === 0) throw new Error("No valid rows found in CSV.");
+  return rows;
+}
+
+document.getElementById('csvInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    try {
+      currentRows = parseCsvRows(evt.target.result);
+      renderAll(); recenterOnData();
+      statusEl.className = "status ok";
+      statusEl.textContent = `Loaded ${currentRows.length} rows from uploaded CSV \u2192 ${buyingPoints.length} buying points.`;
+    } catch (err) {
+      statusEl.className = "status err"; statusEl.textContent = err.message;
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('geoInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    try {
+      boundariesData = JSON.parse(evt.target.result);
+      renderAll();
+      statusEl.className = "status ok";
+      statusEl.textContent = "Boundaries file loaded.";
+    } catch (err) {
+      statusEl.className = "status err"; statusEl.textContent = "Could not parse GeoJSON: " + err.message;
+    }
+  };
+  reader.readAsText(file);
+});
+
+// ---- try auto-loading from the repo's own data/ folder first ----
+async function autoLoad() {
+  try {
+    const res = await fetch('data/receipts.csv');
+    if (!res.ok) throw new Error("not reachable");
+    const text = await res.text();
+    currentRows = parseCsvRows(text);
+
+    try {
+      const bRes = await fetch('data/boundaries.geojson');
+      if (bRes.ok) boundariesData = await bRes.json();
+    } catch (e) { /* boundaries are optional */ }
+
+    renderAll(); recenterOnData();
+    sourceLine.textContent = "Auto-loaded from repo data files";
+    statusEl.className = "status ok";
+    statusEl.textContent = `Loaded ${currentRows.length} rows from data/receipts.csv` +
+      (boundariesData ? " and data/boundaries.geojson." : " (no boundaries.geojson found — using bubbles).");
+    uploadBox.classList.add('hidden');
+  } catch (err) {
+    // fetch blocked — likely opened via file:// without a local server. Fall back to manual upload.
+    sourceLine.textContent = "Manual upload mode (open via a server or GitHub Pages to auto-load)";
+    statusEl.className = "status pending";
+    statusEl.textContent = "Could not auto-load data/receipts.csv (probably opened as a local file). Upload manually below, or serve this folder with a local server.";
+    renderAll();
+  }
+}
+
+autoLoad();
+</script>
+</body>
+</html>
